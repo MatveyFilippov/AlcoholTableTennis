@@ -1,0 +1,64 @@
+name: att
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+      TZ: UTC
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - db:/var/lib/postgresql/data
+    networks: [storage]
+  api:
+    image: ${ATT_API_IMAGE:?required}
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:?required}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?required}
+      PGDATABASE: ${POSTGRES_DB:?required}
+      ATT_VERSION: ${ATT_SHA:-bootstrap}
+      ATT_TRUST_EDGE: '1'
+    env_file:
+      - path: ${ATT_ADMIN_ENV_FILE:-/opt/att/admin.env}
+        format: raw
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [edge, storage]
+  web:
+    image: ${ATT_WEB_IMAGE:?required}
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge]
+volumes:
+  db:
+  caddy_data:
+  caddy_config:
+networks:
+  edge:
+  storage:
+    internal: true

@@ -1,0 +1,91 @@
+import { expect, test } from '@playwright/test'
+
+test('public evening, quick match, local counter recovery and idempotent publication', async ({
+  page, request,
+}, info) => {
+  const suffix = ' ' + Date.now().toString(36).slice(-4)
+  const names = ['Анна', 'Борис', 'Вера'].map(name => name + suffix)
+  const state = async () => (await request.get('/api/v1/state')).json()
+  const add = async (entity: string, data: unknown) => {
+    const response = await request.post('/api/v1/' + entity, {
+      data, headers: { 'Idempotency-Key': crypto.randomUUID() },
+    })
+    expect(response.status()).toBe(201)
+    return response.json()
+  }
+  async function capture(label: string) {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      page.viewportSize()!.width)
+    await page.screenshot({ path: info.outputPath(label + '.png'), fullPage: true, scale: 'css' })
+  }
+  const initial = await state()
+  const count = initial.matches.length
+  await page.goto('/players')
+  page.on('dialog', dialog => void dialog.accept())
+  await page.getByLabel('Псевдоним').fill(names[0])
+  await page.getByRole('button', { name: 'Добавить игрока' }).click()
+  await expect(page.getByText('Запись добавлена.')).toBeVisible()
+  const b = await add('players', { name: names[1] })
+  await add('players', { name: names[2] })
+  await page.goto('/matches/new')
+  await page.getByRole('combobox', { name: 'Игрок 1', exact: true }).selectOption({ label: names[0] })
+  await page.getByRole('combobox', { name: 'Игрок 2', exact: true }).selectOption({ label: names[1] })
+  await page.getByLabel('Очки игрока 1').fill('11')
+  await page.getByLabel('Очки игрока 2').fill('10')
+  await expect(page.getByRole('button', { name: 'Проверить результат' })).toBeDisabled()
+  await page.getByLabel('Очки игрока 2').fill('9')
+  await capture('quick')
+  await page.getByRole('button', { name: 'Проверить результат' }).click()
+  await page.getByRole('button', { name: 'Подтвердить и записать' }).click()
+  await expect(page.getByText('Матч записан.', { exact: false })).toBeVisible()
+
+  const stage = await add('stages', { name: 'Раунд ' + (initial.current_stage.number + 1) })
+  await page.goto('/scorekeeper')
+  await page.getByRole('combobox', { name: 'Игрок 1', exact: true }).selectOption({ label: names[1] })
+  await page.getByRole('combobox', { name: 'Игрок 2', exact: true }).selectOption({ label: names[2] })
+  await page.getByRole('radio', { name: 'До 21' }).check()
+  await page.getByRole('combobox', { name: 'Игрок 1 · 0–10', exact: true }).selectOption('0')
+  await page.getByRole('combobox', { name: 'Игрок 2 · 0–10', exact: true }).selectOption('0')
+  await page.getByRole('button', { name: 'Начать матч' }).click()
+  const point = page.getByRole('button', { name: new RegExp(names[1] + ': .*добавить очко') })
+  await point.click()
+  await point.click()
+  await page.getByRole('button', { name: 'Отменить очко' }).click()
+  await add('drinks', { player_id: b.id, stage_id: stage.id, name: 'Пиво', volume_ml: 500, abv_percent: 5 })
+  expect((await state()).matches).toHaveLength(count + 1)
+  await page.reload()
+  await page.getByRole('button', { name: 'Восстановить черновик' }).click()
+  await expect(point).toHaveAccessibleName(new RegExp(': 1,'))
+  await capture('live')
+  for (let i = 1; i < 21; i++) await point.click()
+  await expect(point).toBeDisabled()
+  await page.getByRole('button', { name: 'Записать результат' }).click()
+  await page.route('**/api/v1/matches', async route => {
+    if (route.request().method() === 'POST') {
+      await route.fetch()
+      await route.abort('failed')
+    } else await route.continue()
+  }, { times: 1 })
+  await page.getByRole('button', { name: 'Подтвердить и записать' }).click()
+  await expect(page.getByRole('alert')).toContainText('Нет связи')
+  await page.getByRole('button', { name: 'Повторить отправку' }).click()
+  await expect(page.getByText('Матч записан.', { exact: true })).toBeVisible()
+  const final = await state()
+  expect(final.matches).toHaveLength(count + 2)
+  expect(final.matches[0].a.ethanol_g).toBe(0)
+  expect(final.matches[0].sober).toBe(true)
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Рейтинг', exact: true })).toBeVisible()
+  await capture('overview')
+  await page.goto('/alcohol')
+  await expect(page.getByText('19,725 г', { exact: true }).first()).toBeVisible()
+  await capture('alcohol')
+  await page.goto('/analytics')
+  await page.getByRole('button', { name: 'Алкоголь и результаты' }).click()
+  await expect(page.getByRole('heading', { name: 'Этанол и результат' })).toBeVisible()
+  await capture('analytics')
+  await page.goto('/admin')
+  await expect(page.getByLabel('Пароль администратора')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Удалить' })).toHaveCount(0)
+})
