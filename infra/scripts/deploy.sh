@@ -31,21 +31,37 @@ export ATT_SHA=$sha ATT_WEB_IMAGE=$web ATT_API_IMAGE=$api
 "${compose[@]}" config --quiet
 "${compose[@]}" pull web api
 "${compose[@]}" up -d --wait --no-recreate db
+# The one-time 0001 transition removes columns used by the old app.
+legacy_schema=$("${compose[@]}" exec -T db sh -ec '
+    if [ "$(psql -XAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT to_regclass('\''alembic_version'\'')")" ]; then
+        psql -XAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version"
+    fi
+')
+if [[ $legacy_schema == 0001 ]]; then
+    echo "Stopping the legacy application before the incompatible database migration"
+    "${compose[@]}" stop web api
+fi
 backup=$("$here/backup.sh" "$sha")
 echo "Database backup: $backup"
-# Release migrations must preserve compatibility with the active app. PostgreSQL DDL is transactional.
+# Persist the barrier so a failed migration or rollout retry cannot select old images.
+if [[ $legacy_schema == 0001 ]]; then
+    printf '%s\n' "$backup" > "$root/legacy-schema-backup"
+    rm -f -- "$root/previous.env"
+fi
+# PostgreSQL DDL is transactional.
 "${compose[@]}" run --rm --no-deps api alembic upgrade head
 if "${compose[@]}" up -d --wait --no-deps api web && "$here/smoke.sh" "https://$domain" "$sha"; then
-    if [[ -f $root/active.env && ${old_sha:-} != "$sha" ]]; then
+    if [[ ! -f $root/legacy-schema-backup && -f $root/active.env && ${old_sha:-} != "$sha" ]]; then
         cp -- "$root/active.env" "$root/previous.env"
     fi
     printf '%s %s %s %s %s\n' "$sha" "$tag" "$web" "$api" "$(dirname "$here")" > "$root/active.next"
     mv -- "$root/active.next" "$root/active.env"
+    rm -f -- "$root/legacy-schema-backup"
     echo "Deployed $tag ($sha)"
     exit 0
 fi
 echo "Rollout failed after migration. Backup: $backup" >&2
-if [[ -n ${old_sha:-} ]]; then
+if [[ -n ${old_sha:-} && ! -f $root/legacy-schema-backup ]]; then
     export ATT_SHA=$old_sha ATT_WEB_IMAGE=$old_web ATT_API_IMAGE=$old_api
     if docker compose --env-file "$root/.env" -f "$old_release/compose.prod.yml" up -d --wait --no-deps api web &&
         "$here/smoke.sh" "https://$domain" "$old_sha"; then
@@ -55,6 +71,6 @@ if [[ -n ${old_sha:-} ]]; then
     fi
 else
     "${compose[@]}" stop web api || true
-    echo "No earlier release exists; database and backup retained" >&2
+    echo "No compatible application rollback is available; database and backup retained" >&2
 fi
 exit 1

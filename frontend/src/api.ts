@@ -13,10 +13,17 @@ export interface Stats {
   expected: number | null
   residual: number | null
 }
+export interface Half extends Stats { mean_ethanol_g: number }
+export interface Comparison {
+  n: number
+  omitted: number
+  start: Half | null
+  end: Half | null
+  delta: number | null
+}
 export interface Observation {
   match_id: string
   seq: number
-  stage_id: string
   opponent_id: string
   actual: number
   expected: number
@@ -25,34 +32,21 @@ export interface Observation {
   self_rating: number | null
   elo_before: number
   elo_after: number
-  sober_elo_after?: number
 }
 export interface Player extends RecordBase, Stats {
   name: string
   archived_at: string | null
   rank: number | null
-  sober_rank: number | null
   elo: number
   elo_delta: number
-  sober_elo: number | null
-  sober_matches: number
   preliminary: boolean
   ethanol_g: number
   volume_ml: number
   observations: Observation[]
-}
-export interface Stage extends RecordBase {
-  name: string
-  number: number
-  matches: number
-  assessments: number
-  mean_rating: number | null
-  median_rating: number | null
-  ethanol_g: number
+  comparison: Comparison
 }
 export interface Drink extends RecordBase {
   player_id: string
-  stage_id: string
   name: string
   volume_ml: number
   abv_percent: number
@@ -63,7 +57,6 @@ export interface Drink extends RecordBase {
 export interface MatchInput {
   player_a_id: string
   player_b_id: string
-  stage_id: string
   target: number
   score_a: number
   score_b: number
@@ -76,17 +69,19 @@ export interface MatchInput {
 export interface Match extends RecordBase, Omit<MatchInput, 'mode' | 'started_at'> {
   winner_id: string
   started_at: string | null
-  sober: boolean
   a: Observation
   b: Observation
 }
 export interface State {
   tournament: { id: string; title: string }
-  current_stage: Stage
   snapshot_seq: number
   projection_version: string
   last_activity: string | null
-  stages: Stage[]
+  comparison_order: string[]
+  facts: {
+    frequent_pair: { players: [string, string]; n: number } | null
+    tightest_match_id: string | null
+  }
   players: Player[]
   drinks: Drink[]
   matches: Match[]
@@ -95,7 +90,6 @@ export interface Profile extends Player {
   matches: Match[]
   drinks: Drink[]
   bins: (Stats & { label: string })[]
-  stages: (Stats & { id: string })[]
   opponents: (Stats & { id: string })[]
 }
 export interface Pair {
@@ -147,5 +141,3 @@ export const date = (value: string | null) => value
   : '—'
 export const playerName = (state: State, id: string) =>
   state.players.find(player => player.id === id)?.name ?? 'Игрок'
-export const stageName = (state: State, id: string) =>
-  state.stages.find(stage => stage.id === id)?.name ?? 'Этап'

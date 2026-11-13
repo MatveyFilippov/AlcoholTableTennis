@@ -17,17 +17,17 @@ If these documents are attached to a Codex Work task but not yet in the reposito
 ## Engineering
 
 - KISS/DRY/SOLID as warranted; prefer a clear modular monolith over complexity. Python/FastAPI + React/TypeScript + PostgreSQL + Alembic + Docker Compose + Caddy as defined in docs.
-- Strict boundary of concern: backend owns score validation, event timeline, ethanol math, Elo, sober Elo and analytics. Frontend displays authoritative API results; local scorekeeper is an unpublished device draft.
-- No player accounts; public visitor may **create** players/stages/drinks/completed matches; admin only may **edit/soft-delete/restore**. Public alcohol details are intentionally visible. Admin password comes only from secure environment variables.
-- One evening, one tournament, no rounds-as-tournaments, no seasons. Stage #0 sober. Per-match self-assessment is integer 0–10 or unknown (`null`). Each game to 11/21, must win by 2 and terminate at the earliest legal score.
-- Ratings: overall Elo 1000/K32 plus separate sober Elo, descriptive alcohol analytics; deterministic full replay on corrections. Do not claim a causal alcohol effect or compute BAC.
+- Strict boundary of concern: backend owns score validation, event timeline, ethanol math, Elo and analytics. Frontend displays authoritative API results; local scorekeeper is an unpublished device draft.
+- No player accounts; public visitor may **create** players/drinks/completed matches; admin only may **edit/soft-delete/restore**. Public alcohol details are intentionally visible. Admin password comes only from secure environment variables.
+- One evening, one tournament, no seasons. Per-match self-assessment is integer 0–10 or unknown (`null`). Each game to 11/21, must win by 2 and terminate at the earliest legal score.
+- Ratings: one Elo rating (1000/K32) and descriptive alcohol analytics; deterministic full replay on corrections. Do not claim a causal alcohol effect or compute BAC.
 - Designs MUST be light-first, polished, Apple-like clarity but original; tennis accent and just a hint of celebration. Avoid generic AI template aesthetics, dark-first and gratuitous gradients/3D.
 - Use whichever relevant skills, tooling and libraries improve implementation quality. Verify dependency versions and official docs; avoid unjustified complexity and licensing problems.
 
 ## Testing and done
 
 - Before PR run backend unit/integration, frontend unit, lint/type checks, Playwright E2E, Docker image builds/Compose validation, and UI reviews at mobile/desktop sizes. Include screenshots and exact executed commands/results in the PR description.
-- Unit tests must include score edge cases and Elo golden values; integration must include admin auth, event ordering, idempotency, correction/replay, sober eligibility, and local-only counter publishing once.
+- Unit tests must include score edge cases and Elo golden values; integration must include admin auth, event ordering, idempotency, correction/replay, start/end comparison, and local-only counter publishing once.
 - `AGENTS.md`, README, `.env.example`, migration docs, API/OpenAPI, release/deploy runbook, GitHub Actions workflows and recovery instructions are part of the deliverable.
 - Do not log or commit credentials, local `.env`, node_modules, Python venv, DB volumes, unreviewed generated vendor code or screenshots containing secrets.
 - Do not claim deployment succeeded because the workflow YAML exists. Clearly report anything dependent on the owner (secrets, GHCR visibility, branch rules, VPS bootstrap).

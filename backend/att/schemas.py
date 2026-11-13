@@ -46,19 +46,8 @@ class PlayerInput(Input):
         return self
 
 
-class StageInput(Input):
-    name: Name | None = None
-
-    @model_validator(mode="after")
-    def normalized_length(self):
-        if self.name and len(self.name) > 60:
-            raise ValueError("Название должно быть не длиннее 60 символов")
-        return self
-
-
 class DrinkInput(Input):
     player_id: UUID
-    stage_id: UUID
     name: Name
     volume_ml: Annotated[Decimal, Field(gt=0, le=5000, decimal_places=6)]
     abv_percent: Annotated[Decimal, Field(ge=0, le=100, decimal_places=6)]
@@ -73,7 +62,6 @@ class DrinkInput(Input):
 class MatchInput(Input):
     player_a_id: UUID
     player_b_id: UUID
-    stage_id: UUID
     target: Annotated[int, Field(strict=True)]
     score_a: Points
     score_b: Points
@@ -95,11 +83,6 @@ class MatchInput(Input):
 class PlayerEdit(PlayerInput):
     row_version: Version
     archived: bool = False
-
-
-class StageEdit(StageInput):
-    row_version: Version
-    name: Name
 
 
 class DrinkEdit(DrinkInput):

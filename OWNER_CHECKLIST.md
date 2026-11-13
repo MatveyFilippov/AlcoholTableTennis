@@ -13,7 +13,7 @@ This is intentionally a **practical checklist**. Do not send SSH credentials, pr
 
 - [ ] PR targets **`dev`**, source starts with **`codex/`**, title/commits follow Conventional Commits.
 - [ ] Review source for a real backend, database migrations, UI, functional scorekeeper, algorithms, tests and workflows; don't accept a template/scaffold as a finished app.
-- [ ] Check screenshots for **light**, minimalist, coherent professional design. No dark-first default, giant gradients or generic AI dashboard.
+- [ ] Check screenshots for **light**, minimalist, coherent professional design. Review the evening summary and the Start vs End comparison at mobile width. No dark-first default, giant gradients or generic AI dashboard.
 - [ ] Check that tests actually ran and results are attached. Focus on scores `11:10` invalid, `12:10` valid, `12:9` invalid; Elo 1000/1000 → 1016/984, and recalc after old match edit.
 - [ ] Check that public visitors can **add only**; administrator is required to edit/delete; all drink logs are publicly visible.
 - [ ] Check `AGENTS.md`, user README, `.env.example`, API docs, Compose files, deploy/restore runbook and workflow definitions exist.

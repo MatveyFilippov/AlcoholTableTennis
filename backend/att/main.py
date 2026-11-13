@@ -19,7 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DB
 from starlette.exceptions import HTTPException
 
-from .db import AdminSession, Audit, Session
+from .db import AdminSession, Audit, Idempotency, Session
 from .projection import profile, project
 from .schemas import (
     DrinkEdit,
@@ -30,8 +30,6 @@ from .schemas import (
     PlayerEdit,
     PlayerInput,
     Revision,
-    StageEdit,
-    StageInput,
 )
 from .service import ENTITIES, Problem, change, clock, create, record
 
@@ -176,7 +174,9 @@ def live():
 def ready(db: Database):
     clock(db)
     tables = db.execute(
-        text("SELECT to_regclass('matches'), to_regclass('drinks'), to_regclass('admin_sessions')")
+        text(
+            "SELECT to_regclass('matches'), to_regclass('drinks'), to_regclass('admin_sessions'), to_regclass('stages') IS NULL"
+        )
     ).one()
     if not all(tables):
         raise Problem(503, "SCHEMA_UNAVAILABLE", "Схема хранилища ещё не готова")
@@ -195,18 +195,10 @@ def players(db: Database):
     return project(db)["players"]
 
 
-@api.get("/stages")
-def stages(db: Database):
-    return project(db)["stages"]
-
-
 @api.get("/drinks")
-def drinks(db: Database, player_id: UUID | None = None, stage_id: UUID | None = None):
+def drinks(db: Database, player_id: UUID | None = None):
     return [
-        d
-        for d in project(db)["drinks"]
-        if (player_id is None or d["player_id"] == str(player_id))
-        and (stage_id is None or d["stage_id"] == str(stage_id))
+        d for d in project(db)["drinks"] if (player_id is None or d["player_id"] == str(player_id))
     ]
 
 
@@ -215,7 +207,6 @@ def matches(
     db: Database,
     player_id: UUID | None = None,
     opponent_id: UUID | None = None,
-    stage_id: UUID | None = None,
     target: int | None = None,
     oldest: bool = False,
 ):
@@ -224,7 +215,6 @@ def matches(
         for m in project(db)["matches"]
         if (player_id is None or str(player_id) in (m["player_a_id"], m["player_b_id"]))
         and (opponent_id is None or str(opponent_id) in (m["player_a_id"], m["player_b_id"]))
-        and (stage_id is None or m["stage_id"] == str(stage_id))
         and (target is None or m["target"] == target)
     ]
     return rows[::-1] if oldest else rows
@@ -242,6 +232,14 @@ def lookup(rows: list[dict], id: UUID) -> dict:
 def player(id: UUID, db: Database):
     view = project(db)
     return profile(view, lookup(view["players"], id))
+
+
+@api.get("/match-publication")
+def match_publication(key: Key, db: Database):
+    """Resolve an uncertain publication without replaying a legacy payload."""
+    clock(db)
+    result = db.get(Idempotency, ("matches", key))
+    return {"match_id": result.result_id if result is not None else None}
 
 
 @api.get("/matches/{id}")
@@ -277,11 +275,6 @@ def head_to_head(db: Database, player_a: UUID, player_b: UUID):
 @api.post("/players", status_code=201, dependencies=[Depends(write_limit)])
 def add_player(payload: PlayerInput, key: Key, db: Database):
     return create(db, "players", payload, key)
-
-
-@api.post("/stages", status_code=201, dependencies=[Depends(write_limit)])
-def add_stage(payload: StageInput, key: Key, db: Database):
-    return create(db, "stages", payload, key)
 
 
 @api.post("/drinks", status_code=201, dependencies=[Depends(write_limit)])
@@ -361,11 +354,6 @@ def edit_player(id: UUID, payload: PlayerEdit, session: Admin, db: Database):
     return change(db, "players", id, "edit", payload.row_version, session.id, payload)
 
 
-@api.patch("/admin/stages/{id}", dependencies=[Depends(csrf)])
-def edit_stage(id: UUID, payload: StageEdit, session: Admin, db: Database):
-    return change(db, "stages", id, "edit", payload.row_version, session.id, payload)
-
-
 @api.patch("/admin/drinks/{id}", dependencies=[Depends(csrf)])
 def edit_drink(id: UUID, payload: DrinkEdit, session: Admin, db: Database):
     return change(db, "drinks", id, "edit", payload.row_version, session.id, payload)
@@ -386,11 +374,9 @@ def preview_match(id: UUID, payload: MatchEdit, session: Admin, db: Database):
             "name": p["name"],
             "before": previous[p["id"]]["elo"],
             "after": p["elo"],
-            "sober_before": previous[p["id"]]["sober_elo"],
-            "sober_after": p["sober_elo"],
         }
         for p in after["players"]
-        if any(p[key] != previous[p["id"]][key] for key in ("elo", "sober_elo"))
+        if p["elo"] != previous[p["id"]]["elo"]
     ]
 
 

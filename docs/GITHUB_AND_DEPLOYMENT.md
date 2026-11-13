@@ -124,7 +124,7 @@ Official Docker installation reference (always verify current commands): https:/
 - Domain resolves correctly and 80/443 accessible; TLS cert is valid with auto-renewal; HTTP redirects to HTTPS.
 - App's `/api/health/live` and `/api/health/ready` both pass, API docs optionally restricted to development; no open DB port.
 - Owner can log into admin through HTTPS, anonymous creation works and anonymous modifications are rejected.
-- Fresh seeded tournament has stage #0 and zero fake activity. Local scorekeeper draft remains local; end/save works on a phone.
+- Fresh seeded tournament has zero activity. Local scorekeeper draft remains local; end/save works on a phone.
 - Main/Dev protection is active; failed tests block PR; normal push/PR cannot deploy; only stable published release deploys.
 - Current version commit and backup path visible to operator; recovery command tested on copy.
 

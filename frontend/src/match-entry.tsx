@@ -3,7 +3,7 @@ import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api, ApiError, decimal } from './api'
 import type { Match, State } from './api'
-import { addPoint, draftKey, draftLifetime, finished, matchBody, maxPoints, readDraft, score, undo } from './scoring'
+import { addPoint, draftKey, legacyDraftKey, draftLifetime, finished, matchBody, maxPoints, readDraft, score, undo } from './scoring'
 import type { Draft, Setup } from './scoring'
 import { Assessment, Empty, Header, Notice, PlayerSelect } from './ui'
 
@@ -26,7 +26,6 @@ function SetupForm({ state, live, refresh, onStart, onSaved }: {
   const [uncertain, setUncertain] = useState(false)
   const lock = useRef(false)
   const active = state.players.filter(p => !p.archived_at)
-  const stage = state.current_stage
   const valid = pointsA !== '' && pointsB !== '' && finished(target, Number(pointsA), Number(pointsB))
 
   async function prepare(event: FormEvent) {
@@ -41,20 +40,20 @@ function SetupForm({ state, live, refresh, onStart, onSaved }: {
       if (live) {
         const current = await refresh()
         if (current.projection_version !== state.projection_version) {
-          setError('Вечер обновился. Проверьте этап и участников, затем начните снова.')
+          setError('Вечер обновился. Проверьте участников, затем начните снова.')
           return
         }
       }
       const setup: Setup = {
-        player_a_id: a, player_b_id: b, target, stage_id: stage.id, snapshot_seq: state.snapshot_seq,
-        a_intoxication: stage.number === 0 ? 0 : ratingA,
-        b_intoxication: stage.number === 0 ? 0 : ratingB,
-        nameA: playerA.name, nameB: playerB.name, stageName: stage.name,
+        player_a_id: a, player_b_id: b, target, snapshot_seq: state.snapshot_seq,
+        a_intoxication: ratingA,
+        b_intoxication: ratingB,
+        nameA: playerA.name, nameB: playerB.name,
         gramsA: playerA.ethanol_g, gramsB: playerB.ethanol_g,
         ...(live ? { started_at: new Date().toISOString() } : {}),
       }
       const key = crypto.randomUUID()
-      if (live) onStart({ version: 1, timestamp: Date.now(), key, setup, points: [], pending: false })
+      if (live) onStart({ version: 2, timestamp: Date.now(), key, setup, points: [], pending: false })
       else setReview({ setup, a: Number(pointsA), b: Number(pointsB), key })
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false); lock.current = false }
@@ -92,7 +91,7 @@ function SetupForm({ state, live, refresh, onStart, onSaved }: {
     <h2>Проверка результата</h2>
     <p className="review-score">{review.setup.nameA} <strong>{review.a} : {review.b}</strong> {review.setup.nameB}</p>
     <p>Победитель — {review.a > review.b ? review.setup.nameA : review.setup.nameB}.</p>
-    <p className="muted">{review.setup.stageName} · до {review.setup.target} · снимок №{review.setup.snapshot_seq}</p>
+    <p className="muted">До {review.setup.target} · снимок №{review.setup.snapshot_seq}</p>
     {error && <Notice error>{error}</Notice>}
     <div className="actions">
       {stale ? <button className="primary" disabled={busy} onClick={reconcile}>Обновить данные</button> :
@@ -105,7 +104,7 @@ function SetupForm({ state, live, refresh, onStart, onSaved }: {
   </section>
   return <form className="panel form-panel" onSubmit={prepare}>
     {saved && <Notice>Матч записан. Можно записать ещё один матч этой пары.</Notice>}
-    <div className="form-context"><span className="stage">№{stage.number} · {stage.name}</span>
+    <div className="form-context">
       <small>Состояние на записи №{state.snapshot_seq}</small></div>
     <div className="fields">
       <PlayerSelect label="Игрок 1" players={active} value={a} onChange={setA} exclude={b} />
@@ -123,10 +122,10 @@ function SetupForm({ state, live, refresh, onStart, onSaved }: {
     </div>}
     <fieldset><legend>Самооценка в начале игры</legend>
       <div className="fields">
-        <Assessment label="Игрок 1 · 0–10" initial={stage.number === 0} value={stage.number === 0 ? 0 : ratingA} onChange={setRatingA} />
-        <Assessment label="Игрок 2 · 0–10" initial={stage.number === 0} value={stage.number === 0 ? 0 : ratingB} onChange={setRatingB} />
+        <Assessment label="Игрок 1 · 0–10" value={ratingA} onChange={setRatingA} />
+        <Assessment label="Игрок 2 · 0–10" value={ratingB} onChange={setRatingB} />
       </div>
-      {stage.number === 0 && <small>На начальном этапе обе оценки равны 0.</small>}
+      <small>Если оценку не сообщили, оставьте «Неизвестно».</small>
     </fieldset>
     {error && <Notice error>{error}</Notice>}
     <button className="primary" disabled={busy || !a || !b || (!live && !valid)}>{live ? 'Начать матч' : 'Проверить результат'}</button>
@@ -138,7 +137,7 @@ export function MatchEntry({ state, live = false, refresh, onSaved }: {
 }) {
   const navigate = useNavigate()
   const [draft, setDraft] = useState<Draft | null>(() => {
-    try { return live ? readDraft(localStorage.getItem(draftKey)) : null }
+    try { return live ? readDraft(localStorage.getItem(draftKey) ?? localStorage.getItem(legacyDraftKey)) : null }
     catch { return null }
   })
   const [recover, setRecover] = useState(Boolean(draft))
@@ -156,6 +155,7 @@ export function MatchEntry({ state, live = false, refresh, onSaved }: {
     try {
       if (next) localStorage.setItem(draftKey, JSON.stringify(next))
       else localStorage.removeItem(draftKey)
+      localStorage.removeItem(legacyDraftKey)
     } catch { setStorageError(true) }
   }
 
@@ -172,7 +172,7 @@ export function MatchEntry({ state, live = false, refresh, onSaved }: {
 
   async function publish() {
     const active = latest.current
-    if (!active || inFlight.current) return
+    if (!active || active.needsPublicationCheck || inFlight.current) return
     inFlight.current = true
     setBusy(true)
     setError('')
@@ -189,6 +189,26 @@ export function MatchEntry({ state, live = false, refresh, onSaved }: {
       if (err instanceof ApiError && err.status >= 400 && err.status < 500 &&
           !['RATE_LIMIT', 'IDEMPOTENCY_CONFLICT'].includes(err.code)) store({ ...active, pending: false })
     } finally { setBusy(false); inFlight.current = false }
+  }
+
+  async function checkPublication() {
+    const active = latest.current
+    if (!active?.needsPublicationCheck || inFlight.current) return
+    inFlight.current = true
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api<{ match_id: string | null }>('/match-publication', { key: active.key })
+      if (result.match_id) {
+        store(null)
+        setPublished(true)
+        onSaved()
+      } else {
+        store({ ...active, pending: false, needsPublicationCheck: undefined })
+        setConfirm(true)
+      }
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false); inFlight.current = false }
   }
 
   const header = <Header title={live ? 'Счётчик матча' : 'Записать матч'}
@@ -208,13 +228,13 @@ export function MatchEntry({ state, live = false, refresh, onSaved }: {
   if (recover) return <>{header}<section className="panel form-panel">
     <h2>{expired ? 'Черновику больше двух дней' : 'Продолжить матч?'}</h2>
     <p>{draft.setup.nameA} · {a} : {b} · {draft.setup.nameB}</p>
-    <div className="actions"><button className="primary" onClick={() => setRecover(false)}>Восстановить черновик</button>
+    <div className="actions"><button className="primary" onClick={() => { store(draft); setRecover(false) }}>Восстановить черновик</button>
       <button className="quiet" onClick={discard}>Начать заново</button></div>
   </section></>
 
   const gamePoint = !done && (finished(draft.setup.target, a + 1, b) || finished(draft.setup.target, a, b + 1))
   return <>{header}<section className="scorekeeper">
-    <div className="board-meta"><span>{draft.setup.stageName}</span><span>До {draft.setup.target}</span>
+    <div className="board-meta"><span>До {draft.setup.target}</span>
       <span>{done ? 'Матч завершён' : gamePoint ? 'Матчбол' : 'Матч идёт'}</span></div>
     <div className="board">
       {(['a', 'b'] as const).map(side => {
@@ -231,13 +251,16 @@ export function MatchEntry({ state, live = false, refresh, onSaved }: {
       самооценка {draft.setup.a_intoxication ?? 'неизвестно'} / {draft.setup.b_intoxication ?? 'неизвестно'}</p>
     {storageError && <Notice error>Браузер не сохраняет черновик. Оставьте вкладку открытой до публикации.</Notice>}
     {error && <Notice error>{error}</Notice>}
-    {(confirm || draft.pending) && <Notice>Будет записан счёт {a} : {b} со снимком на начало матча.</Notice>}
+    {draft.needsPublicationCheck && <Notice>Этот черновик уже пытались отправить. Проверьте историю по ключу, чтобы не записать матч дважды.</Notice>}
+    {(confirm || draft.pending) && !draft.needsPublicationCheck && <Notice>Будет записан счёт {a} : {b} со снимком на начало матча.</Notice>}
     <div className="actions score-actions">
       <button className="quiet" disabled={!draft.points.length || draft.pending || busy}
         onClick={() => { if (latest.current) store(undo(latest.current)); setConfirm(false) }}>Отменить очко</button>
       <button className="quiet" disabled={busy} onClick={discard}>Начать заново</button>
-      {done && <button className="primary" disabled={busy} onClick={confirm || draft.pending ? publish : () => setConfirm(true)}>
-        {busy ? 'Сохранение…' : draft.pending ? 'Повторить отправку' : confirm ? 'Подтвердить и записать' : 'Записать результат'}
+      {done && <button className="primary" disabled={busy} onClick={draft.needsPublicationCheck ? checkPublication : confirm || draft.pending ? publish : () => setConfirm(true)}>
+        {busy ? (draft.needsPublicationCheck ? 'Проверка…' : 'Сохранение…') :
+          draft.needsPublicationCheck ? 'Проверить публикацию' : draft.pending && error ? 'Повторить отправку' :
+            confirm ? 'Подтвердить и записать' : draft.pending ? 'Повторить отправку' : 'Записать результат'}
       </button>}
     </div>
   </section></>

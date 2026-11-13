@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, date, decimal } from './api'
-import type { Drink, Match, Player, Stage, State } from './api'
-import { Assessment, Empty, Header, Notice, PlayerSelect, StageSelect } from './ui'
+import type { Drink, Match, Player, State } from './api'
+import { Assessment, Empty, Header, Notice, PlayerSelect } from './ui'
 
 type Entity = keyof Records
 interface Impact {
@@ -10,20 +10,17 @@ interface Impact {
   name: string
   before: number
   after: number
-  sober_before: number | null
-  sober_after: number | null
 }
 interface Records {
   players: Player[]
-  stages: Stage[]
   drinks: Drink[]
   matches: Match[]
 }
 interface Audit {
-  id: string; action: string; entity: Entity; entity_id: string; created_at: string
+  id: string; action: string; entity: string; entity_id: string; created_at: string
   before: unknown; after: unknown
 }
-const labels = { players: 'Игроки', stages: 'Этапы', drinks: 'Напитки', matches: 'Матчи' }
+const labels = { players: 'Игроки', drinks: 'Напитки', matches: 'Матчи' }
 const actions: Record<string, string> = { edit: 'Исправление', delete: 'Удаление', restore: 'Восстановление' }
 
 function EditForm({ state, records, entity, id, onChange }: {
@@ -32,12 +29,10 @@ function EditForm({ state, records, entity, id, onChange }: {
 }) {
   const row = records[entity].find(r => r.id === id)!
   const player = entity === 'players' ? row as Player : null
-  const stage = entity === 'stages' ? row as Stage : null
   const drink = entity === 'drinks' ? row as Drink : null
   const match = entity === 'matches' ? row as Match : null
-  const [name, setName] = useState(player?.name ?? stage?.name ?? drink?.name ?? '')
+  const [name, setName] = useState(player?.name ?? drink?.name ?? '')
   const [archived, setArchived] = useState(Boolean(player?.archived_at))
-  const [stageId, setStage] = useState(drink?.stage_id ?? match?.stage_id ?? '')
   const [a, setA] = useState(match?.player_a_id ?? drink?.player_id ?? '')
   const [b, setB] = useState(match?.player_b_id ?? '')
   const [target, setTarget] = useState(match?.target ?? 11)
@@ -51,9 +46,7 @@ function EditForm({ state, records, entity, id, onChange }: {
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<{ body: string; rows: Impact[] } | null>(null)
   const rev = { row_version: row.row_version }
-  const stages = state.stages.filter(s => match ? s.seq <= match.snapshot_seq : !drink || s.seq < drink.seq)
   const players = state.players.filter(p => match ? p.seq <= match.snapshot_seq : !drink || p.seq < drink.seq)
-  const initial = stages.find(s => s.id === stageId)?.number === 0
 
   async function perform(method: string, body: unknown, suffix?: string) {
     if (busy) return
@@ -72,10 +65,10 @@ function EditForm({ state, records, entity, id, onChange }: {
     event.preventDefault()
     if (busy) return
     const body = match ? {
-      player_a_id: a, player_b_id: b, stage_id: stageId, target, score_a: scoreA, score_b: scoreB,
+      player_a_id: a, player_b_id: b, target, score_a: scoreA, score_b: scoreB,
       snapshot_seq: match.snapshot_seq, started_at: match.started_at,
-      a_intoxication: initial ? 0 : ratingA, b_intoxication: initial ? 0 : ratingB,
-    } : drink ? { player_id: a, stage_id: stageId, name, volume_ml: volume, abv_percent: abv } :
+      a_intoxication: ratingA, b_intoxication: ratingB,
+    } : drink ? { player_id: a, name, volume_ml: volume, abv_percent: abv } :
       player ? { name, archived } : { name }
     const payload = { ...rev, ...body }
     if (match && preview?.body !== JSON.stringify(payload)) {
@@ -90,7 +83,6 @@ function EditForm({ state, records, entity, id, onChange }: {
     await perform('PATCH', payload)
   }
 
-  if (stage?.number === 0) return <Empty>Системный этап доступен только для просмотра.</Empty>
   return <form className="panel form-panel" onSubmit={submit}>
     {row.deleted_at ? <><p>Запись удалена {date(row.deleted_at)}.</p><button type="button" disabled={busy}
       onClick={() => perform('POST', rev, '/restore')}>Восстановить</button></> :
@@ -98,7 +90,6 @@ function EditForm({ state, records, entity, id, onChange }: {
         {!match && <label>Название<input required value={name} maxLength={player ? 40 : 60} onChange={e => setName(e.target.value)} /></label>}
         {player && <label className="checkbox"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} />Скрыть из новых записей</label>}
         {(drink || match) && <>
-          <StageSelect stages={stages} value={stageId} onChange={setStage} />
           <PlayerSelect label={match ? 'Игрок 1' : 'Игрок'} players={players} value={a} onChange={setA} exclude={b} />
         </>}
         {drink && <div className="fields"><label>Объём, мл<input required type="number" min=".000001" max="5000" step="any" value={volume}
@@ -111,13 +102,12 @@ function EditForm({ state, records, entity, id, onChange }: {
           <div className="fields"><label>Очки игрока 1<input required type="number" min="0" max="999" value={scoreA}
             onChange={e => setScoreA(e.target.valueAsNumber)} /></label><label>Очки игрока 2<input required type="number" min="0" max="999"
             value={scoreB} onChange={e => setScoreB(e.target.valueAsNumber)} /></label></div>
-          <div className="fields"><Assessment label="Самооценка 1" initial={initial} value={initial ? 0 : ratingA} onChange={setRatingA} />
-            <Assessment label="Самооценка 2" initial={initial} value={initial ? 0 : ratingB} onChange={setRatingB} /></div>
+          <div className="fields"><Assessment label="Самооценка 1" value={ratingA} onChange={setRatingA} />
+            <Assessment label="Самооценка 2" value={ratingB} onChange={setRatingB} /></div>
         </>}
         {preview && <div aria-live="polite"><h3>После пересчёта</h3>
           {preview.rows.length ? <ul className="list">{preview.rows.map(p => <li key={p.id}>
-            <strong>{p.name}</strong><small>Elo {decimal(p.before, 2)} → {decimal(p.after, 2)} ·
-              Трезвый Elo {decimal(p.sober_before, 2)} → {decimal(p.sober_after, 2)}</small>
+            <strong>{p.name}</strong><small>Elo {decimal(p.before, 2)} → {decimal(p.after, 2)}</small>
           </li>)}</ul> : <p>Итоговые рейтинги сохранятся.</p>}
         </div>}
         <div className="actions"><button className="primary">{match && !preview ? 'Проверить влияние' : 'Сохранить'}</button>
@@ -196,7 +186,7 @@ export function AdminPage({ state, onSaved }: { state: State; onSaved: () => voi
       {status && <Notice>{status}</Notice>}
       {row && <EditForm key={row.id + row.row_version} state={state} records={records} entity={entity} id={id} onChange={change} />}
       <section><h2>Журнал изменений</h2><div className="panel">{audit.length ? <ul className="list">{audit.map(a =>
-        <li key={a.id}><details><summary>{actions[a.action]} · {labels[a.entity]} · {date(a.created_at)}</summary>
+        <li key={a.id}><details><summary>{actions[a.action]} · {labels[a.entity as Entity] ?? "Историческая запись"} · {date(a.created_at)}</summary>
           <p>До</p><pre>{JSON.stringify(a.before, null, 2)}</pre><p>После</p><pre>{JSON.stringify(a.after, null, 2)}</pre>
         </details></li>)}</ul> : <Empty>Исправлений пока нет.</Empty>}</div></section>
     </>}

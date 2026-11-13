@@ -1,13 +1,13 @@
 from bisect import bisect_right
-from collections import defaultdict
+from collections import Counter, defaultdict
 from decimal import Decimal
-from statistics import mean, median
+from statistics import mean
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import Drink, Match, Player, Stage, Tournament, TOURNAMENT_ID
+from .db import Drink, Match, Player, Tournament, TOURNAMENT_ID
 from .rules import elo, ethanol
 from .service import clock, record
 
@@ -34,18 +34,56 @@ def group_stats(observations: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def compare_halves(observations: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(observations)
+    if n < 4:
+        return {"n": n, "omitted": 0, "start": None, "end": None, "delta": None}
+
+    def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        return {**group_stats(rows), "mean_ethanol_g": mean(o["ethanol_g"] for o in rows)}
+
+    k = n // 2
+    start, end = summary(observations[:k]), summary(observations[-k:])
+    return {
+        "n": n,
+        "omitted": n % 2,
+        "start": start,
+        "end": end,
+        "delta": end["residual"] - start["residual"],
+    }
+
+
+def comparison_order(players: list[dict[str, Any]]) -> list[str]:
+    eligible = (p for p in players if p["comparison"]["delta"] is not None)
+    return [
+        p["id"]
+        for p in sorted(
+            eligible, key=lambda p: (p["comparison"]["delta"], p["name"].casefold(), p["id"])
+        )
+    ]
+
+
+def evening_facts(matches: list[dict[str, Any]]) -> dict[str, Any]:
+    pairs = Counter(tuple(sorted((m["player_a_id"], m["player_b_id"]))) for m in matches)
+    top = pairs.most_common(2)
+    frequent = None
+    if top and top[0][1] >= 2 and (len(top) == 1 or top[0][1] > top[1][1]):
+        frequent = {"players": top[0][0], "n": top[0][1]}
+    margins = sorted(matches, key=lambda m: (abs(m["score_a"] - m["score_b"]), m["seq"]))
+    tightest = None
+    if len(margins) >= 2:
+        first, second = margins[:2]
+        if abs(first["score_a"] - first["score_b"]) < abs(second["score_a"] - second["score_b"]):
+            tightest = first["id"]
+    return {"frequent_pair": frequent, "tightest_match_id": tightest}
+
+
 def project(db: Session) -> dict[str, Any]:
     timeline = clock(db)
-    stages = [
-        record(s)
-        for s in db.scalars(select(Stage).where(Stage.deleted_at.is_(None)).order_by(Stage.seq))
-    ]
     players = {
         str(p.id): {
             **record(p),
             "elo": 1000.0,
-            "sober_elo": 1000.0,
-            "sober_matches": 0,
             "ethanol_g": 0.0,
             "volume_ml": 0.0,
             "observations": [],
@@ -80,13 +118,11 @@ def project(db: Session) -> dict[str, Any]:
     for match in db.scalars(select(Match).where(Match.deleted_at.is_(None)).order_by(Match.seq)):
         a, b = players[str(match.player_a_id)], players[str(match.player_b_id)]
         a_g, b_g = at(a["id"], match.snapshot_seq), at(b["id"], match.snapshot_seq)
-        sober = match.a_intoxication == match.b_intoxication == 0 and a_g == b_g == 0
         actual = int(match.score_a > match.score_b)
         a_elo, b_elo, expected = elo(a["elo"], b["elo"], actual)
         entry = {
             **record(match),
             "winner_id": a["id"] if actual else b["id"],
-            "sober": sober,
         }
         for side, player, opponent, result, probability, after, amount, rating in (
             ("a", a, b, actual, expected, a_elo, a_g, match.a_intoxication),
@@ -95,7 +131,6 @@ def project(db: Session) -> dict[str, Any]:
             observation = {
                 "match_id": str(match.id),
                 "seq": match.seq,
-                "stage_id": str(match.stage_id),
                 "opponent_id": opponent["id"],
                 "actual": result,
                 "expected": probability,
@@ -108,12 +143,6 @@ def project(db: Session) -> dict[str, Any]:
             player["elo"] = after
             player["observations"].append(observation)
             entry[side] = observation
-        if sober:
-            a["sober_elo"], b["sober_elo"], _ = elo(a["sober_elo"], b["sober_elo"], actual)
-            a["sober_matches"] += 1
-            b["sober_matches"] += 1
-            entry["a"]["sober_elo_after"] = a["sober_elo"]
-            entry["b"]["sober_elo_after"] = b["sober_elo"]
         matches.append(entry)
 
     for id, player in players.items():
@@ -124,52 +153,26 @@ def project(db: Session) -> dict[str, Any]:
             volume_ml=float(volumes[id]),
             preliminary=0 < len(observations) < 5,
             elo_delta=player["elo"] - 1000,
+            comparison=compare_halves(observations),
         )
-        if not player["sober_matches"]:
-            player["sober_elo"] = None
     standings = sorted(
         players.values(), key=lambda p: (not p["n"], -p["elo"], p["name"].casefold(), p["id"])
     )
-    sober_standings = sorted(
-        (p for p in standings if p["sober_matches"]),
-        key=lambda p: (-p["sober_elo"], p["name"].casefold(), p["id"]),
-    )
     for rank, player in enumerate(standings, 1):
         player["rank"] = rank if player["n"] else None
-        player["sober_rank"] = None
-    for rank, player in enumerate(sober_standings, 1):
-        player["sober_rank"] = rank
-
-    for stage in stages:
-        stage_matches = [m for m in matches if m["stage_id"] == stage["id"]]
-        ratings = [
-            m[key]
-            for m in stage_matches
-            for key in ("a_intoxication", "b_intoxication")
-            if m[key] is not None
-        ]
-        stage.update(
-            matches=len(stage_matches),
-            assessments=len(ratings),
-            mean_rating=mean(ratings) if ratings else None,
-            median_rating=median(ratings) if ratings else None,
-            ethanol_g=sum(d["ethanol_g"] for d in drinks if d["stage_id"] == stage["id"]),
-        )
     tournament = db.get(Tournament, TOURNAMENT_ID)
     assert tournament is not None
-    activity = max(
-        (r["created_at"] for r in [*standings, *stages[1:], *matches, *drinks]), default=None
-    )
+    activity = max((r["created_at"] for r in [*standings, *matches, *drinks]), default=None)
     return {
         "tournament": record(tournament),
-        "current_stage": stages[-1],
-        "stages": stages,
         "snapshot_seq": timeline.last_seq,
         "projection_version": f"{timeline.last_seq}.{timeline.revision}",
         "players": standings,
         "matches": matches[::-1],
         "drinks": drinks[::-1],
         "last_activity": activity,
+        "comparison_order": comparison_order(standings),
+        "facts": evening_facts(matches),
     }
 
 
@@ -187,10 +190,6 @@ def profile(state: dict[str, Any], player: dict[str, Any]) -> dict[str, Any]:
                 **group_stats([o for o in observations if bucket(o["self_rating"]) == label]),
             }
             for label in BINS
-        ],
-        "stages": [
-            {"id": s["id"], **group_stats([o for o in observations if o["stage_id"] == s["id"]])}
-            for s in state["stages"]
         ],
         "opponents": [
             {"id": id, **group_stats([o for o in observations if o["opponent_id"] == id])}

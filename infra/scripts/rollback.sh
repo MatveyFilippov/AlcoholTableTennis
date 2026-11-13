@@ -7,6 +7,9 @@ root=/opt/att
 }
 exec 9>"$root/deploy.lock"
 flock -n 9
+[[ ! -f $root/legacy-schema-backup ]] || {
+    echo "Application rollback is unavailable during the schema transition" >&2; exit 1;
+}
 IFS=' ' read -r ATT_SHA tag ATT_WEB_IMAGE ATT_API_IMAGE release < "$root/previous.env"
 [[ $release == "$root/releases/"* ]]
 export ATT_SHA ATT_WEB_IMAGE ATT_API_IMAGE

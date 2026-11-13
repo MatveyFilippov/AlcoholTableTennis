@@ -18,7 +18,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 TOURNAMENT_ID = UUID(int=1)
-INITIAL_STAGE_ID = UUID(int=2)
 engine = create_engine(
     os.getenv("DATABASE_URL", "postgresql+psycopg://"),
     pool_pre_ping=True,
@@ -62,12 +61,6 @@ class Player(Event, Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class Stage(Event, Base):
-    __tablename__ = "stages"
-    number: Mapped[int] = mapped_column(unique=True)
-    name: Mapped[str] = mapped_column(String(60))
-
-
 class Drink(Event, Base):
     __tablename__ = "drinks"
     __table_args__ = (
@@ -76,7 +69,6 @@ class Drink(Event, Base):
         Index("ix_drinks_player_seq", "player_id", "seq"),
     )
     player_id: Mapped[UUID] = mapped_column(ForeignKey("players.id"), index=True)
-    stage_id: Mapped[UUID] = mapped_column(ForeignKey("stages.id"), index=True)
     name: Mapped[str] = mapped_column(String(60))
     volume_ml: Mapped[Decimal] = mapped_column(Numeric(12, 6))
     abv_percent: Mapped[Decimal] = mapped_column(Numeric(12, 6))
@@ -97,7 +89,6 @@ class Match(Event, Base):
     )
     player_a_id: Mapped[UUID] = mapped_column(ForeignKey("players.id"), index=True)
     player_b_id: Mapped[UUID] = mapped_column(ForeignKey("players.id"), index=True)
-    stage_id: Mapped[UUID] = mapped_column(ForeignKey("stages.id"), index=True)
     target: Mapped[int]
     score_a: Mapped[int]
     score_b: Mapped[int]

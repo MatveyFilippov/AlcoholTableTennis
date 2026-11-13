@@ -59,6 +59,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-24.04
+    env:
+      ATT_E2E_ADMIN_PASSWORD: att-e2e-disposable
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -70,7 +72,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci && npm exec -- playwright install --with-deps chromium
         working-directory: frontend
-      - run: docker compose up --build --wait && infra/scripts/smoke.sh http://127.0.0.1:8080
+      - name: Start the isolated E2E stack
+        run: |
+          docker compose build api
+          export ADMIN_PASSWORD_HASH
+          ADMIN_PASSWORD_HASH=$(docker run --rm --env ATT_E2E_ADMIN_PASSWORD att-local-api python -c 'import os; from argon2 import PasswordHasher; print(PasswordHasher().hash(os.environ["ATT_E2E_ADMIN_PASSWORD"]))')
+          docker compose up --build --wait
+          infra/scripts/smoke.sh http://127.0.0.1:8080
       - run: npm run e2e
         working-directory: frontend
       - if: always()

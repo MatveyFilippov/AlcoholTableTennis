@@ -4,13 +4,13 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from .db import Audit, Clock, Drink, Idempotency, Match, Player, Stage
-from .schemas import DrinkInput, Input, MatchInput, PlayerInput, StageInput
+from .db import Audit, Clock, Drink, Idempotency, Match, Player
+from .schemas import DrinkInput, Input, MatchInput, PlayerInput
 
-ENTITIES = {"players": Player, "stages": Stage, "drinks": Drink, "matches": Match}
+ENTITIES = {"players": Player, "drinks": Drink, "matches": Match}
 
 
 class Problem(Exception):
@@ -42,17 +42,6 @@ def find(db: Session, model: Any, id: UUID, *, deleted: bool = False) -> Any:
     return row
 
 
-def current_stage(db: Session, seq: int) -> Stage:
-    stage = db.scalar(
-        select(Stage)
-        .where(Stage.seq <= seq, Stage.deleted_at.is_(None))
-        .order_by(Stage.seq.desc())
-        .limit(1)
-    )
-    assert stage is not None
-    return stage
-
-
 def payload_values(
     db: Session, payload: Input, timeline: Clock, existing: Any = None
 ) -> dict[str, Any]:
@@ -63,44 +52,25 @@ def payload_values(
         if duplicate is not None and (existing is None or duplicate.id != existing.id):
             raise Problem(409, "DUPLICATE_NAME", "Такое имя уже есть. Выберите другое.")
         data["normalized_name"] = normalized
-    if isinstance(payload, StageInput) and existing is None:
-        number = (db.scalar(select(func.max(Stage.number))) or 0) + 1
-        data.update(number=number, name=payload.name or f"Раунд {number}")
     if isinstance(payload, DrinkInput):
         player = find(db, Player, payload.player_id)
-        stage = find(db, Stage, payload.stage_id)
         if existing is None and player.archived_at:
             raise Problem(409, "ARCHIVED_PLAYER", "Игрок скрыт из новых записей")
-        if existing is not None and max(player.seq, stage.seq) >= existing.seq:
-            raise Problem(409, "INVALID_TIMELINE", "Игрок и этап должны существовать до записи")
-        if stage.number == 0 and payload.abv_percent > 0:
-            raise Problem(422, "SOBER_STAGE", "Для напитка с алкоголем добавьте следующий этап")
+        if existing is not None and player.seq >= existing.seq:
+            raise Problem(409, "INVALID_TIMELINE", "Игрок должен существовать до записи")
     if isinstance(payload, MatchInput):
         a = find(db, Player, payload.player_a_id)
         b = find(db, Player, payload.player_b_id)
-        stage = find(db, Stage, payload.stage_id)
         snap = payload.snapshot_seq
         if existing is not None and snap != existing.snapshot_seq:
             raise Problem(409, "INVALID_SNAPSHOT", "Снимок начала матча нельзя изменить")
-        if max(a.seq, b.seq, stage.seq) > snap or snap > timeline.last_seq:
-            raise Problem(
-                409, "INVALID_SNAPSHOT", "Игроки и этап должны существовать на момент начала"
-            )
+        if max(a.seq, b.seq) > snap or snap > timeline.last_seq:
+            raise Problem(409, "INVALID_SNAPSHOT", "Игроки должны существовать на момент начала")
         if existing is None:
             if a.archived_at or b.archived_at:
                 raise Problem(409, "ARCHIVED_PLAYER", "Выберите активных игроков")
             if payload.mode == "quick" and snap != timeline.last_seq:
                 raise Problem(409, "STALE_STATE", "Вечер обновился. Обновите данные перед записью.")
-            if stage.id != current_stage(db, snap).id:
-                raise Problem(
-                    409, "INVALID_STAGE", "Выбранный этап не был текущим на момент начала"
-                )
-        if stage.number == 0:
-            if payload.a_intoxication not in (0, None) or payload.b_intoxication not in (0, None):
-                raise Problem(
-                    422, "SOBER_STAGE", "Для этапа «Трезвые» используется начальная оценка 0"
-                )
-            data.update(a_intoxication=0, b_intoxication=0)
     return data
 
 
@@ -137,8 +107,6 @@ def change(
     row = find(db, ENTITIES[entity], id, deleted=True)
     if row.row_version != version:
         raise Problem(409, "STALE_VERSION", "Запись уже изменилась. Обновите страницу.")
-    if isinstance(row, Stage) and row.number == 0:
-        raise Problem(403, "SYSTEM_STAGE", "Системный этап нельзя изменить")
     if bool(row.deleted_at) != (action == "restore"):
         raise Problem(409, "INVALID_ACTION", "Действие не подходит для текущего состояния записи")
     before = record(row)
@@ -149,21 +117,15 @@ def change(
         if isinstance(row, Player):
             row.archived_at = (row.archived_at or datetime.now(UTC)) if payload.archived else None
     elif action == "delete":
-        if isinstance(row, (Player, Stage)):
-            if isinstance(row, Player):
-                matches = or_(Match.player_a_id == id, Match.player_b_id == id)
-                drinks = Drink.player_id == id
-            else:
-                matches = Match.stage_id == id
-                drinks = Drink.stage_id == id
+        if isinstance(row, Player):
+            matches = or_(Match.player_a_id == id, Match.player_b_id == id)
+            drinks = Drink.player_id == id
             if db.scalar(select(Match.id).where(matches, Match.deleted_at.is_(None)).limit(1)) or (
                 db.scalar(select(Drink.id).where(drinks, Drink.deleted_at.is_(None)).limit(1))
             ):
                 raise Problem(409, "DEPENDENCIES", "Сначала обработайте связанные матчи и напитки")
         row.deleted_at = datetime.now(UTC)
     else:
-        if isinstance(row, (Drink, Match)):
-            find(db, Stage, row.stage_id)
         if isinstance(row, Drink):
             find(db, Player, row.player_id)
         if isinstance(row, Match):

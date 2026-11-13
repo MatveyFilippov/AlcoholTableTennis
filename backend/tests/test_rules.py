@@ -60,3 +60,51 @@ def test_ethanol_and_missing_data():
     assert tuple(map(bucket, [0, 3, 6, 10, None])) == BINS
     assert group_stats([])["win_rate"] is None
     assert group_stats([{"actual": 1, "expected": 0.5, "residual": 0.5}])["residual"] == 0.5
+
+
+@pytest.mark.parametrize("n", range(4))
+def test_comparison_requires_four_matches(n):
+    from att.projection import compare_halves
+
+    assert compare_halves([{}] * n) == {
+        "n": n,
+        "omitted": 0,
+        "start": None,
+        "end": None,
+        "delta": None,
+    }
+
+
+def test_comparison_goldens_and_order():
+    from att.projection import compare_halves, comparison_order
+
+    def observation(actual, expected, grams):
+        return {
+            "actual": actual,
+            "expected": expected,
+            "residual": actual - expected,
+            "ethanol_g": grams,
+        }
+
+    start = [observation(1, 0.75, 0), observation(1, 0.5, 0)]
+    end = [observation(0, 0.25, 10), observation(0, 0.5, 30)]
+    lower = compare_halves(start + end)
+    higher = compare_halves(end + [observation(1, 0.1, 999)] + start)
+    same = compare_halves(start + start)
+    assert lower["delta"] == -0.75
+    assert lower["start"]["win_rate"] == 1
+    assert lower["end"]["mean_ethanol_g"] == 20
+    assert higher["delta"] == 0.75 and higher["omitted"] == 1
+    assert higher["start"]["n"] == higher["end"]["n"] == 2
+    assert same["delta"] == 0
+    assert comparison_order(
+        [
+            {"id": id, "name": id, "comparison": comparison}
+            for id, comparison in [
+                ("high", higher),
+                ("none", compare_halves([])),
+                ("low", lower),
+                ("zero", same),
+            ]
+        ]
+    ) == ["low", "zero", "high"]

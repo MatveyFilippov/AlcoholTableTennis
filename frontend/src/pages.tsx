@@ -1,20 +1,25 @@
 import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Link } from 'react-router'
-import { api, date, decimal, playerName, stageName } from './api'
+import { api, date, decimal, playerName, percent } from './api'
 import type { Drink, State } from './api'
-import { Empty, Header, Leaderboard, MatchList, Notice, PlayerSelect, StageSelect } from './ui'
-import { RatingChart } from './charts'
+import { Empty, Header, Leaderboard, MatchList, Notice, PlayerSelect } from './ui'
+import { RatingSelection } from './charts'
 
 const privacy = 'Статистика этого вечера, включая сведения об алкоголе, публична. Используйте псевдонимы и добавляйте данные с согласия участников.'
 
 export function Overview({ state }: { state: State }) {
+  const leader = state.players.find(player => player.rank === 1)
+  const pair = state.facts.frequent_pair
+  const tightest = state.matches.find(match => match.id === state.facts.tightest_match_id)
   return <>
     <section className="evening">
       <div className="evening-copy">
-        <span className="stage"><i /> Этап №{state.current_stage.number} · {state.current_stage.name}</span>
-        <h1>Настольный<br />теннис<span>.</span></h1>
-        <p>{state.matches.length ? 'Результаты и ход игрового вечера.' : 'Добавьте игроков, чтобы записать первый матч.'}</p>
+
+        <h1>Итоги вечера<span>.</span></h1>
+        <p>{leader ? <>Лидирует <Link to={'/players/' + leader.id}>{leader.name}</Link> ·
+          Elo {decimal(leader.elo, 0)} · {leader.wins}–{leader.losses} · {percent(leader.win_rate)} побед</> :
+          'Добавьте игроков, чтобы записать первый матч.'}</p>
         <div className="actions">
           <Link className="button primary" to={state.players.filter(p => !p.archived_at).length >= 2 ? '/matches/new' : '/players'}>
             {state.players.filter(p => !p.archived_at).length >= 2 ? 'Записать матч' : 'Добавить игроков'}
@@ -29,6 +34,10 @@ export function Overview({ state }: { state: State }) {
       <div><span>Игроки</span><strong>{state.players.length}</strong></div>
       <div><span>Последняя запись</span><strong className="activity">{date(state.last_activity)}</strong></div>
     </div>
+    {(pair || tightest) && <div className="evening-facts">
+      {pair && <p><strong>Самая частая пара</strong> {pair.players.map(id => playerName(state, id)).join(' и ')} · {pair.n} матч.</p>}
+      {tightest && <p><strong>Самая напряжённая игра</strong> {playerName(state, tightest.player_a_id)} {tightest.score_a} : {tightest.score_b} {playerName(state, tightest.player_b_id)}</p>}
+    </div>}
     <div className="overview-grid">
       <section><div className="section-head"><h2>Рейтинг</h2><Link to="/players">Все игроки</Link></div>
         <div className="panel"><Leaderboard players={state.players.slice(0, 5)} /></div></section>
@@ -36,7 +45,7 @@ export function Overview({ state }: { state: State }) {
         <div className="panel"><MatchList state={state} matches={state.matches.slice(0, 4)} /></div></section>
     </div>
     <section><div className="section-head"><h2>Динамика Elo</h2><Link to="/analytics">Аналитика</Link></div>
-      <div className="panel chart-panel"><RatingChart state={state} players={state.players.filter(p => p.n).slice(0, 3)} /></div>
+      <div className="panel chart-panel"><RatingSelection players={state.players} /></div>
     </section>
   </>
 }
@@ -44,18 +53,16 @@ export function Overview({ state }: { state: State }) {
 export function Matches({ state }: { state: State }) {
   const [player, setPlayer] = useState('')
   const [opponent, setOpponent] = useState('')
-  const [stage, setStage] = useState('')
   const [target, setTarget] = useState('')
   const [oldest, setOldest] = useState(false)
   const filtered = state.matches.filter(m =>
     (!player || [m.player_a_id, m.player_b_id].includes(player)) &&
     (!opponent || [m.player_a_id, m.player_b_id].includes(opponent)) &&
-    (!stage || stage === m.stage_id) && (!target || Number(target) === m.target))
+    (!target || Number(target) === m.target))
   return <><Header title="Матчи"><Link className="button primary" to="/matches/new">Записать матч</Link></Header>
     <div className="filters">
       <PlayerSelect label="Игрок" players={state.players} value={player} onChange={setPlayer} exclude={opponent} optional />
       <PlayerSelect label="Соперник" players={state.players} value={opponent} onChange={setOpponent} exclude={player} optional />
-      <StageSelect stages={state.stages} value={stage} onChange={setStage} optional />
       <label>Формат<select value={target} onChange={e => setTarget(e.target.value)}>
         <option value="">Любой</option><option value="11">До 11</option><option value="21">До 21</option></select></label>
       <label>Порядок<select value={oldest ? 'old' : 'new'} onChange={e => setOldest(e.target.value === 'old')}>
@@ -126,27 +133,18 @@ export function Players({ state, onSaved }: { state: State; onSaved: () => void 
 export function DrinkList({ drinks, state }: { drinks: Drink[]; state: State }) {
   if (!drinks.length) return <Empty>Пока нет записей о напитках.</Empty>
   return <ul className="list drinks">{drinks.map(d => <li key={d.id}><div>
-    <strong>{d.name}</strong><small>{playerName(state, d.player_id)} · {stageName(state, d.stage_id)} · {date(d.created_at)}</small>
+    <strong>{d.name}</strong><small>{playerName(state, d.player_id)} · {date(d.created_at)}</small>
   </div><div><strong>{decimal(d.ethanol_g, 3)} г</strong><small>{decimal(d.volume_ml, 3)} мл · {decimal(d.abv_percent, 3)}%</small></div></li>)}</ul>
 }
 
 export function Alcohol({ state, onSaved }: { state: State; onSaved: () => void }) {
-  const [name, setName] = useState('')
   const [player, setPlayer] = useState('')
   const [drink, setDrink] = useState('')
   const [volume, setVolume] = useState('')
   const [abv, setAbv] = useState('')
-  const [stage, setStage] = useState('')
-  const chosenStage = stage || state.current_stage.id
-  return <><Header title="Алкоголь" detail="Этапы, напитки и накопленное количество этанола." />
+  return <><Header title="Алкоголь" detail="Чтобы статистика отражала состояние во время игры, записывайте напитки по факту." />
     <div className="split">
       <div>
-        <section><div className="section-head"><h2>Этапы вечера</h2></div>
-          <ol className="list panel stage-list">{state.stages.map(s => <li key={s.id}>
-            <span className="stage-number">№{s.number}</span><div><strong>{s.name}</strong>
-              <small>{s.matches} матч. · {decimal(s.ethanol_g)} г этанола · Самооценка {decimal(s.mean_rating)} / 10</small></div>
-            {s.id === state.current_stage.id && <span className="stage current">Текущий</span>}
-          </li>)}</ol></section>
         <section><div className="section-head"><h2>Напитки</h2></div><div className="panel"><DrinkList drinks={state.drinks} state={state} /></div></section>
         <section><div className="section-head"><h2>Итого по игрокам</h2></div><ul className="list panel">
           {state.players.map(p => <li key={p.id}><Link to={'/players/' + p.id}>{p.name}</Link>
@@ -155,10 +153,9 @@ export function Alcohol({ state, onSaved }: { state: State; onSaved: () => void 
       </div>
       <div className="stack">
         <PublicForm title="Добавить напиток" path="/drinks"
-          payload={() => ({ name: drink, player_id: player, stage_id: chosenStage, volume_ml: volume, abv_percent: abv })}
+          payload={() => ({ name: drink, player_id: player, volume_ml: volume, abv_percent: abv })}
           onSaved={() => { setDrink(''); setVolume(''); setAbv(''); onSaved() }}>
           <PlayerSelect label="Игрок" players={state.players.filter(p => !p.archived_at)} value={player} onChange={setPlayer} />
-          <StageSelect stages={state.stages} value={chosenStage} onChange={setStage} />
           <label>Напиток<input required maxLength={60} value={drink} onChange={e => setDrink(e.target.value)} /></label>
           <div className="fields">
             <label>Объём, мл<input required type="number" min=".000001" max="5000" step="any" inputMode="decimal"
@@ -166,13 +163,7 @@ export function Alcohol({ state, onSaved }: { state: State; onSaved: () => void 
             <label>Крепость, %<input required type="number" min="0" max="100" step="any" inputMode="decimal"
               value={abv} onChange={e => setAbv(e.target.value)} /></label>
           </div>
-          {chosenStage === state.stages[0].id && <small>Для алкогольного напитка сначала добавьте этап.</small>}
           <small>{privacy}</small>
-        </PublicForm>
-        <PublicForm title="Добавить этап" path="/stages" payload={() => ({ name: name.trim() || null })}
-          onSaved={() => { setName(''); setStage(''); onSaved() }}>
-          <label>Название<input maxLength={60} value={name} onChange={e => setName(e.target.value)}
-            placeholder={`Раунд ${state.current_stage.number + 1}`} /></label>
         </PublicForm>
       </div>
     </div>

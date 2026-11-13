@@ -4,11 +4,11 @@ import type { Draft } from './scoring'
 
 const uuid = (n: number) => `00000000-0000-0000-0000-00000000000${n}`
 const draft: Draft = {
-  version: 1, timestamp: 100, key: uuid(1), points: [], pending: false,
+  version: 2, timestamp: 100, key: uuid(1), points: [], pending: false,
   setup: {
-    player_a_id: uuid(2), player_b_id: uuid(3), stage_id: uuid(4),
+    player_a_id: uuid(2), player_b_id: uuid(3),
     target: 11, snapshot_seq: 7, a_intoxication: 0, b_intoxication: null,
-    nameA: 'Анна', nameB: 'Борис', stageName: 'Раунд 1', gramsA: 0, gramsB: 10,
+    nameA: 'Анна', nameB: 'Борис', gramsA: 0, gramsB: 10,
     started_at: '2026-11-13T12:00:00Z',
   },
 }
@@ -33,4 +33,18 @@ describe('scorekeeper', () => {
       snapshot_seq: 7, a_intoxication: 0, b_intoxication: null, score_a: 11,
     })
   })
+})
+
+it('migrates legacy scores and blocks an uncertain legacy publication until reconciled', () => {
+  const legacy = { ...draft, version: 1, points: Array(11).fill('a'),
+    setup: { ...draft.setup, stage_id: uuid(4), stageName: 'Старый этап' } }
+  const unsent = readDraft(JSON.stringify(legacy))!
+  expect(unsent.version).toBe(2)
+  expect(unsent.setup).toEqual(draft.setup)
+  expect(unsent.key).toBe(draft.key)
+  expect(unsent.points).toHaveLength(11)
+  const pending = readDraft(JSON.stringify({ ...legacy, pending: true }))!
+  expect(pending).toMatchObject({ version: 2, pending: true, needsPublicationCheck: true })
+  expect(undo(pending)).toBe(pending)
+  expect(readDraft(JSON.stringify(pending))).toEqual(pending)
 })
