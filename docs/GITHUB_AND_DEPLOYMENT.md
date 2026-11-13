@@ -105,7 +105,7 @@ Official Docker installation reference (always verify current commands): https:/
 ## 4. Required production infrastructure deliverables from Codex
 
 - Multi-stage Dockerfile for web (Vite build → Caddy static content and reverse proxy), multi-stage/lean Dockerfile for FastAPI.
-- A `Caddyfile` for `att.ricksanchez.ru` that serves SPA frontend (proper `try_files ... /index.html`) and proxies `/api/*` to `api:8000` **without wrong path rewriting**. Caddy automatic HTTPS; persist data volumes; no external frontend resources needed for site availability.
+- A `Caddyfile` configured by `APP_DOMAIN` (for example, `att.tennisfans.ru`) that serves SPA frontend (proper `try_files ... /index.html`) and proxies `/api/*` to `api:8000` **without wrong path rewriting**. Caddy automatic HTTPS; persist data volumes; no external frontend resources needed for site availability.
 - Compose production file references `ATT_WEB_IMAGE` and `ATT_API_IMAGE` by digest, includes DB internal network and restart/health checks, uses persisted PostgreSQL volume. Internal `api`/`db` not published.
 - Scripts under `infra/scripts/` for backup, deploy, smoke, manual rollback and restore rehearsal; shell strict mode, quoting, lock to prevent simultaneous deploys, return reliable exit codes, redacted logs, and executable test where possible.
 - `infra/README.md` and `.env.example` show all required variables and how to generate secrets, but never values of actual credentials.

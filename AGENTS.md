@@ -12,7 +12,7 @@ If these documents are attached to a Codex Work task but not yet in the reposito
 - Read existing repository structure and conventions first. Use latest `dev` as base for all task branches. Use only `codex/*` branches, e.g. `codex/feat/att-mvp`. **Never** use `code/*`.
 - Do not push to `main`; do not push directly to `dev` for feature changes; do not merge PRs. Open PR to `dev` after implementation and tests. If prerequisites such as `dev` or write authorization are missing, describe the exact blocker rather than circumventing policy.
 - Use Conventional Commits (`feat`, `fix`, `test`, `docs`, `ci`, `chore`, `refactor`, optional scope). Scope commits to actual changes; no fabricated test claims.
-- No direct production interaction: **never SSH, provision, deploy, restore or inspect `att.ricksanchez.ru` through your agent environment**. Codex Work may run and test locally. Production deployment is via GitHub Actions on approved GitHub Release after owner setup.
+- No direct production interaction: **never SSH, provision, deploy, restore or inspect the configured production domain or VPS through your agent environment**. Codex Work may run and test locally. Production deployment is via GitHub Actions on approved GitHub Release after owner setup.
 
 ## Engineering
 

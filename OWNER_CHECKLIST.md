@@ -26,15 +26,15 @@ This is intentionally a **practical checklist**. Do not send SSH credentials, pr
 - [ ] If you are the only contributor, **do not require an approval that only another person can give**, unless you have a reviewer. Required tests + PR restriction can be sufficient.
 - [ ] Merge reviewed implementation PR into `dev`. Then create and merge **separate PR `dev` → `main`** after CI passes. Never deploy from `dev`.
 - [ ] Check `publish-images.yml` successfully published `web` + `api` images tagged with the exact main commit SHA to GHCR. Verify both package pages exist and permit pulls (set each package Public if using anonymous pulls).
-- [ ] In repo Settings → Environments create `production`. Restrict to stable release tag naming policy if supported; store only deploy-specific secrets (`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_PRIVATE_KEY`, `DEPLOY_KNOWN_HOSTS`, optional `DEPLOY_PORT`). Do not put Postgres/admin secrets in public repo files.
+- [ ] In repo Settings → Environments create `production`. Restrict to stable release tag naming policy if supported; store only deploy-specific secrets (`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_PRIVATE_KEY`, `DEPLOY_KNOWN_HOSTS`, optional `DEPLOY_PORT`). Do not put Postgres/admin secrets in public repo files. `DEPLOY_HOST` is the VPS SSH address. Set the public site hostname via `APP_DOMAIN` in `/opt/att/.env`.
 
 ## One-time Ubuntu 24.04 server setup
 
-- [ ] Verify `att.ricksanchez.ru` DNS A/AAAA resolves to the intended machine (user indicated DNS is ready); verify IPv6 if AAAA exists.
+- [ ] Verify `att.tennisfans.ru` DNS A/AAAA resolves to the intended machine (user indicated DNS is ready); verify IPv6 if AAAA exists.
 - [ ] Update Ubuntu, configure SSH key auth (confirm another active SSH session succeeds before disabling password login), create deployment account, review host/provider firewall. Preserve the actual SSH port.
 - [ ] Install Docker Engine and Docker Compose plugin from the [official Docker Ubuntu instructions](https://docs.docker.com/engine/install/ubuntu/). Verify `sudo docker compose version`.
 - [ ] Reserve/open inbound ports 80 and 443 and your real SSH port only; DB (5432), API (8000) are **not** exposed. Review Docker's interaction with UFW rules.
-- [ ] Initialize `/opt/att` with deployment manifests and production `.env` (permissions 600; owner-controlled). Required runtime values: `APP_DOMAIN=att.ricksanchez.ru`, `ADMIN_PASSWORD_HASH`, `SESSION_SECRET`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, any app-specific documented variables and image digest refs. Use a hash-generation helper that Codex implements; don't put plain admin password in config.
+- [ ] Initialize `/opt/att` with deployment manifests and production `.env` (permissions 600; owner-controlled). Set `APP_DOMAIN=att.tennisfans.ru`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` there. Use the password helper to generate `ADMIN_PASSWORD_HASH` for the separate `/opt/att/admin.env` file, also mode 600. The release workflow supplies the image digests.
 - [ ] Create GitHub deploy SSH key using strong modern key type (e.g., ed25519); put its private part only in GitHub Environment secret. Verify host key fingerprint through trusted VPS console and set `DEPLOY_KNOWN_HOSTS`; don't disable host key checking.
 - [ ] Create persistent Docker volumes for DB/Caddy through Compose; verify writable backup directory `/opt/att/backups` and non-world-readable permissions.
 - [ ] Confirm GHCR images can be pulled by production host before first Release (public package setting or documented read-only registry authentication).
@@ -45,7 +45,7 @@ This is intentionally a **practical checklist**. Do not send SSH credentials, pr
 - [ ] CI on `main` green and both matching SHA image digests available for pull.
 - [ ] Publish first **non-prerelease GitHub Release** tag `v1.0.0` at the **current `main` HEAD**. Do not publish it from `dev`, a detached old commit or a dirty/unreviewed branch.
 - [ ] Verify Actions production deploy job used `production` Environment, took DB backup before migration, deployed pinned images and completed HTTPS + API healthchecks.
-- [ ] Open https://att.ricksanchez.ru on phone and desktop; create two dummy pseudonyms and one test match **only if you are happy to retain or administratively remove those records**. Prefer a test/staging DB first if possible.
+- [ ] Open https://att.tennisfans.ru on phone and desktop; create two dummy pseudonyms and one test match **only if you are happy to retain or administratively remove those records**. Prefer a test/staging DB first if possible.
 - [ ] Verify admin can correct a record, anonymous users cannot, timeline and scores recompute, TLS valid.
 - [ ] Record deployed commit/tag and backup location. Test restoration into an isolated **temporary database**, not over production.
 
