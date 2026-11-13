@@ -10,10 +10,14 @@ flock -n 9
 [[ ! -f $root/legacy-schema-backup ]] || {
     echo "Application rollback is unavailable during the schema transition" >&2; exit 1;
 }
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$here/production-domain.sh"
+APP_DOMAIN=$(read_production_domain "$root/.env")
+export APP_DOMAIN
 IFS=' ' read -r ATT_SHA tag ATT_WEB_IMAGE ATT_API_IMAGE release < "$root/previous.env"
 [[ $release == "$root/releases/"* ]]
 export ATT_SHA ATT_WEB_IMAGE ATT_API_IMAGE
 docker compose --env-file "$root/.env" -f "$release/compose.prod.yml" up -d --wait --no-deps api web
-"$release/scripts/smoke.sh" https://att.ricksanchez.ru "$ATT_SHA"
+"$release/scripts/smoke.sh" "https://$APP_DOMAIN" "$ATT_SHA"
 mv -- "$root/previous.env" "$root/active.env"
 echo "Restored compatible application $tag ($ATT_SHA)"

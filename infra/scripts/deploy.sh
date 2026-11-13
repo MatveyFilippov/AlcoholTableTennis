@@ -13,9 +13,10 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 export ATT_COMPOSE_FILE="$here/../compose.prod.yml"
 exec 9>"$root/deploy.lock"
 flock -n 9 || { echo "Another ATT rollout holds the lock" >&2; exit 1; }
+source "$here/production-domain.sh"
+APP_DOMAIN=$(read_production_domain "$root/.env")
+export APP_DOMAIN
 compose=(docker compose --env-file "$root/.env" -f "$ATT_COMPOSE_FILE")
-domain=$(sed -n 's/^APP_DOMAIN=//p' "$root/.env")
-[[ $domain == att.ricksanchez.ru ]]
 if [[ -f $root/active.env ]]; then
     IFS=' ' read -r old_sha old_tag old_web old_api old_release < "$root/active.env"
     [[ $old_sha =~ ^[0-9a-f]{40}$ ]]
@@ -50,7 +51,7 @@ if [[ $legacy_schema == 0001 ]]; then
 fi
 # PostgreSQL DDL is transactional.
 "${compose[@]}" run --rm --no-deps api alembic upgrade head
-if "${compose[@]}" up -d --wait --no-deps api web && "$here/smoke.sh" "https://$domain" "$sha"; then
+if "${compose[@]}" up -d --wait --no-deps api web && "$here/smoke.sh" "https://$APP_DOMAIN" "$sha"; then
     if [[ ! -f $root/legacy-schema-backup && -f $root/active.env && ${old_sha:-} != "$sha" ]]; then
         cp -- "$root/active.env" "$root/previous.env"
     fi
@@ -64,7 +65,7 @@ echo "Rollout failed after migration. Backup: $backup" >&2
 if [[ -n ${old_sha:-} && ! -f $root/legacy-schema-backup ]]; then
     export ATT_SHA=$old_sha ATT_WEB_IMAGE=$old_web ATT_API_IMAGE=$old_api
     if docker compose --env-file "$root/.env" -f "$old_release/compose.prod.yml" up -d --wait --no-deps api web &&
-        "$here/smoke.sh" "https://$domain" "$old_sha"; then
+        "$here/smoke.sh" "https://$APP_DOMAIN" "$old_sha"; then
         echo "Previous compatible application restored ($old_sha)" >&2
     else
         echo "Automatic application rollback failed. Follow infra/README.md." >&2

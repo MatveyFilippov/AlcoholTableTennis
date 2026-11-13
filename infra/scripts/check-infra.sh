@@ -3,6 +3,7 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
 for file in infra/scripts/*.sh; do bash -n "$file"; done
+bash infra/scripts/check-production-domain.sh
 sha=0123456789012345678901234567890123456789
 other=1234567890123456789012345678901234567890
 infra/scripts/release-guard.sh v1.0.0 "$sha" "$sha"
