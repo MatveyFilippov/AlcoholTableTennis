@@ -1,0 +1,58 @@
+name: att-local
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: att
+      POSTGRES_PASSWORD: local-only
+      POSTGRES_DB: att
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U att -d att']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - db:/var/lib/postgresql/data
+  migrate:
+    image: att-local-api
+    build:
+      context: .
+      dockerfile: infra/api.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://att:local-only@db/att
+    command: [alembic, upgrade, head]
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    image: att-local-api
+    build:
+      context: .
+      dockerfile: infra/api.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://att:local-only@db/att
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      ATT_DOCS: '1'
+      ATT_INSECURE_LOCAL: '1'
+      ATT_TRUST_EDGE: '1'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  web:
+    build:
+      context: .
+      dockerfile: infra/web.Dockerfile
+    environment:
+      APP_DOMAIN: ':80'
+    ports:
+      - "127.0.0.1:${ATT_LOCAL_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  db:

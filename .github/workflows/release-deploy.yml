@@ -1,0 +1,103 @@
+name: Deploy stable release
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+concurrency:
+  group: att-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    outputs:
+      sha: ${{ steps.gate.outputs.sha }}
+      tag: ${{ steps.gate.outputs.tag }}
+      web: ${{ steps.gate.outputs.web }}
+      api: ${{ steps.gate.outputs.api }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - id: gate
+        name: Verify tag, main CI and image digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          release=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          infra/scripts/release-guard.sh "$RELEASE_TAG" "$sha" "$release"
+          [[ $release == "$GITHUB_SHA" ]]
+          successful_run() {
+            gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs" \
+              -f head_sha="$sha" -f branch=main -f event=push -f status=success \
+              --jq '.workflow_runs[0].id // empty'
+          }
+          ci_run=$(successful_run ci.yml)
+          publish_run=$(successful_run publish-images.yml)
+          if [[ -z $ci_run || -z $publish_run ]]; then
+            echo "::error::Waiting for successful main CI and image publication for $sha"; exit 1
+          fi
+          gh run download "$publish_run" --repo "$GITHUB_REPOSITORY" --pattern '*-digest'
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          printf 'sha=%s\ntag=%s\n' "$sha" "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          for component in web api; do
+            image="ghcr.io/${GITHUB_REPOSITORY,,}-$component"
+            digest=$(docker buildx imagetools inspect "$image:sha-$sha" | awk '$1 == "Digest:" && !found++ {print $2}')
+            [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ $digest == "$(cat "$component-digest/$component.digest")" ]] || {
+              echo "::error::Registry digest differs from the published build"; exit 1;
+            }
+            printf '%s=%s@%s\n' "$component" "$image" "$digest" >> "$GITHUB_OUTPUT"
+          done
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Deploy verified application and run health checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+          WEB_IMAGE: ${{ needs.verify.outputs.web }}
+          API_IMAGE: ${{ needs.verify.outputs.api }}
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SSH_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          main=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
+          infra/scripts/release-guard.sh "$RELEASE_TAG" "$main" "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          [[ $main == "$RELEASE_SHA" ]]
+          [[ $SSH_HOST =~ ^[a-zA-Z0-9._-]+$ && $SSH_USER =~ ^[a-z_][a-z0-9_-]*$ && $SSH_PORT =~ ^[0-9]{1,5}$ ]]
+          umask 077
+          dir=$(mktemp -d)
+          trap 'rm -rf -- "$dir"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$dir/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$dir/known_hosts"
+          ssh_args=(-p "$SSH_PORT" -i "$dir/key" -o IdentitiesOnly=yes -o BatchMode=yes
+                    -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$dir/known_hosts" "$SSH_USER@$SSH_HOST")
+          remote=$(ssh "${ssh_args[@]}" "mktemp -d /opt/att/releases/$RELEASE_SHA.XXXXXXXX")
+          [[ $remote =~ ^/opt/att/releases/[0-9a-f]{40}\.[a-zA-Z0-9]+$ ]]
+          tar -C infra -czf - compose.prod.yml scripts | ssh "${ssh_args[@]}" "tar -xzf - -C '$remote'"
+          ssh "${ssh_args[@]}" "'$remote/scripts/deploy.sh' '$RELEASE_SHA' '$RELEASE_TAG' '$WEB_IMAGE' '$API_IMAGE'"
