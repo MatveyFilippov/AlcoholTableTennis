@@ -40,7 +40,7 @@ ATT_DOCS=1 ATT_INSECURE_LOCAL=1 uvicorn att.main:app --port 8000
 
 ## Проверки
 
-- Сервер — из `backend/` выполните `ruff check .`, `ruff format --check .`, `mypy att/rules.py att/schemas.py att/db.py` и `pytest -q`. Для интеграционных проверок укажите `ATT_TEST_DATABASE_URL` и `DATABASE_URL` на одну отдельную БД с именем, оканчивающимся на `_test`. Фикстура очищает таблицы в этой БД.
+- Сервер — из `backend/` выполните `ruff check .`, `ruff format --check .`, `mypy att/rules.py att/schemas.py att/db.py` и `pytest -q`. Для интеграционных проверок укажите `ATT_TEST_DATABASE_URL` на отдельную БД с именем, оканчивающимся на `_test`. Фикстура очищает таблицы в этой БД.
 - Клиент — из `frontend/` выполните `npm run lint`, `npm run typecheck`, `npm test` и `npm run build`.
 - Браузер — запустите локальный стек, затем из `frontend/` выполните `npm exec -- playwright install chromium` и `npm run e2e`. Тесты создают записи. Используйте отдельный тестовый стек.
 - Compose и сценарий релиза — `docker compose config --quiet`, `docker compose build`, `infra/scripts/check-infra.sh`.

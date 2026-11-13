@@ -21,7 +21,6 @@ def client(monkeypatch):
     from sqlalchemy import text
 
     assert URL and URL.endswith("_test"), "Use a disposable database ending in _test"
-    monkeypatch.setenv("DATABASE_URL", URL)
     monkeypatch.setenv("ADMIN_PASSWORD_HASH", PasswordHasher().hash("local-test-pass"))
     from att.db import engine
     from att.main import app, attempts
